@@ -24,7 +24,7 @@ A instância executa um container Docker com o **code-server** (Visual Studio Co
 
 ### Passo 2: Executar o script de provisionamento
 No terminal do CloudShell, execute:
-```
+```sh
 curl -sS https://raw.githubusercontent.com/infobarbosa/postgres-rowstore-demo/main/launch-lab.sh | bash
 ```
 
@@ -42,7 +42,7 @@ O script realizará de forma automatizada:
 4. Abra um terminal: menu superior (três linhas horizontais) > **Terminal** > **New Terminal**.
 
 Verifique se o PostgreSQL está no ar:
-```
+```sh
 psql -c "SELECT version();"
 
 ```
@@ -65,20 +65,29 @@ Se a sessão do AWS Academy expirar, a instância será parada. **Não execute o
 3. Aguarde o status **Running** e copie o novo **Public IPv4 address** (ele muda a cada reinício).
 4. Acesse `http://<NOVO_IP_PUBLICO>:8080`. O container reinicia automaticamente e os dados do PostgreSQL são preservados.
 
-## A base de dados
+### Convenções
+Cada bloco de comando do roteiro tem na primeira linha um rótulo, como `# 2.b.1` (seção 2, subseção 2.b, primeiro bloco). Os blocos sem rótulo, logo depois, mostram a saída esperada.
 
-### Database `ecommerce`
+Alguns valores **mudam a cada execução**: o identificador numérico do arquivo (`relfilenode`), os *LSNs* no início da página e, eventualmente, os números de transação (`xmin`/`xmax`). Os seus podem diferir ligeiramente dos do texto, e isso é esperado. Contagens de linhas, tamanhos de tuplas e deslocamentos (`lp_off` / `hex_off`), esses sim, devem bater.
+
+Os comandos funcionam a partir de qualquer pasta. Algumas seções guardam o caminho do arquivo em uma variável (`$ARQUIVO`, `$ARQUIVO_TOAST`); se você abrir um novo terminal no meio do roteiro, rode de novo o bloco que define a variável.
+
+## 1. A base de dados
+
+### 1.a. Database `ecommerce`
 
 Criando a base de dados *ecommerce*:
-```
+```sh
+# 1.a.1
 psql -c "CREATE DATABASE ecommerce;"
 
 ```
 
-### Tabela `cliente`
+### 1.b. Tabela `cliente`
 
 Criando a tabela *cliente*:
-```
+```sh
+# 1.b.1
 psql -d ecommerce -c \
 "CREATE TABLE cliente(
     id int PRIMARY KEY,
@@ -89,7 +98,8 @@ psql -d ecommerce -c \
 ```
 
 Verificando se deu certo:
-```
+```sh
+# 1.b.2
 psql -d ecommerce -c "\d cliente"
 ```
 
@@ -105,10 +115,11 @@ Indexes:
     "cliente_pkey" PRIMARY KEY, btree (id)
 ```
 
-## Operações em linhas (ou registros)
+## 2. Operações em linhas (ou registros)
 
-### 1. 1o. Insert
-```
+### 2.a. 1o. Insert
+```sh
+# 2.a.1
 psql -d ecommerce -c \
 "INSERT INTO cliente(id, cpf, nome)
 VALUES (10, '11111111111', 'marcelo barbosa');"
@@ -116,7 +127,8 @@ VALUES (10, '11111111111', 'marcelo barbosa');"
 ```
 
 Verificando:
-```
+```sh
+# 2.a.2
 psql -d ecommerce -c \
 "SELECT * FROM cliente;"
 ```
@@ -129,10 +141,11 @@ Output:
 (1 row)
 ```
 
-### 2. O arquivo de dados
+### 2.b. O arquivo de dados
 
 Diferente de bancos que nomeiam os arquivos com o próprio nome da tabela, o PostgreSQL organiza os arquivos físicos dentro do diretório `$PGDATA/base/<oid_do_banco>/<relfilenode>`. Para descobrir o caminho exato do arquivo da tabela `cliente` e guardá-lo na variável `ARQUIVO`, execute:
-```
+```sh
+# 2.b.1
 ARQUIVO="$PGDATA/$(psql -d ecommerce -tAc "SELECT pg_relation_filepath('cliente');")"
 echo "$ARQUIVO"
 
@@ -149,7 +162,8 @@ Output esperado (os números no final podem variar):
 > ```
 
 Verificando o conteúdo do arquivo da tabela `cliente`:
-```
+```sh
+# 2.b.2
 cat "$ARQUIVO"
 
 ```
@@ -165,7 +179,8 @@ Agora via utilitário `hexdump`:
 > O utilitário `hexdump` exibe o conteúdo do arquivo em formato hexadecimal. Na coluna da direita, é possível visualizar os dados legíveis (ASCII).
 > No PostgreSQL, o arquivo é dividido em páginas de **8 KB** (`0x2000` = 8192 bytes): o cabeçalho e os ponteiros de linha ficam no início da página (`00000000`), enquanto os registros (tuplas) são gravados **do fim da página (`00002000`) para trás**. Observe como os campos `id` (`0a 00 00 00` = 10), `cpf` e `nome` aparecem **lado a lado**, em sequência — essa é a essência do armazenamento em linha.
 
-```
+```sh
+# 2.b.3
 hd -C "$ARQUIVO"
 
 ```
@@ -184,7 +199,8 @@ Output:
 ```
 
 Agora via utilitário `grep`:
-```
+```sh
+# 2.b.4
 grep --text barbosa "$ARQUIVO"
 
 ```
@@ -195,15 +211,17 @@ Output:
 ```
 
 
-### 3. 2o. Insert
-```
+### 2.c. 2o. Insert
+```sh
+# 2.c.1
 psql -d ecommerce -c \
 "INSERT INTO cliente(id, cpf, nome)
 VALUES (11, '22222222222', 'Juscelino Kubitschek');"
 ```
 
 Checando:
-```
+```sh
+# 2.c.2
 psql -d ecommerce -c \
 "SELECT * FROM cliente;"
 ```
@@ -220,7 +238,8 @@ Output:
 Verificando o arquivo de dados:
 
 ##### `cat`
-```
+```sh
+# 2.c.3
 cat "$ARQUIVO"
 ```
 
@@ -231,7 +250,8 @@ Output:
 ```
 
 ##### `hexdump`
-```
+```sh
+# 2.c.4
 hd -C "$ARQUIVO"
 
 ```
@@ -256,7 +276,8 @@ Output:
 > Repare que o segundo registro (`Juscelino Kubitschek`, em `00001f88`) foi alocado imediatamente **antes** do primeiro (`marcelo barbosa`, em `00001fc8`), pois as tuplas crescem do fim da página (`00002000`) em direção ao início.
 
 ##### `grep`
-```
+```sh
+# 2.c.5
 grep --text Juscelino "$ARQUIVO"
 
 ```
@@ -266,8 +287,9 @@ Output:
 8      ȟpz    	   22222222222+Juscelino Kubitschek    	 
 ```
 
-### 4. Insert em lote
-```
+### 2.d. Insert em lote
+```sh
+# 2.d.1
 psql -d ecommerce -c \
 "INSERT INTO cliente (id, cpf, nome) VALUES (1001, '98753936060', 'MARIVALDA KANAMARY');
 INSERT INTO cliente (id, cpf, nome) VALUES (1002, '12455426050', 'JUCILENE MOREIRA CRUZ');
@@ -279,7 +301,8 @@ INSERT INTO cliente (id, cpf, nome) VALUES (1007, '19052330000', 'LUCILIA ROSA L
 ```
 
 Verificando se os inserts ocorreram como esperado:
-```
+```sh
+# 2.d.2
 psql -d ecommerce -c \
 "SELECT * FROM cliente;"
 ```
@@ -301,7 +324,8 @@ Output esperado:
 ```
 
 ##### `cat`
-```
+```sh
+# 2.d.3
 cat "$ARQUIVO"
 ```
 
@@ -312,7 +336,8 @@ Output:
 ```
 
 ##### `hexdump`
-```
+```sh
+# 2.d.4
 hd -C "$ARQUIVO"
 
 ```
@@ -366,7 +391,8 @@ Output:
 ```
 
 ##### `grep`
-```
+```sh
+# 2.d.5
 grep --text MARIVALDA "$ARQUIVO"
 ```
 
@@ -375,16 +401,18 @@ Output:
  <    ȟpzHv |Ȟ~~@  	  	   190523300005LUCILIA ROSA LIMA PEREIRA     	   661428060005IVONE GLAUCIA VIANA DUTRA     	   797399520035VERA LUCIA RODRIGUES SENA     	   59813133074/ALDENORA VIANA MOREIRA     	   32487300051/GRACIMAR BRASIL GUERRA     	   12455426050-JUCILENE MOREIRA CRUZ    	   98753936060'MARIVALDA KANAMARY    	   22222222222+Juscelino Kubitschek    	 
 ```
 
-### 5. Delete
+### 2.e. Delete
 
 Removendo o registro 11 (Juscelino Kubitschek):
-```
+```sh
+# 2.e.1
 psql -d ecommerce -c \
 "DELETE FROM cliente WHERE id = 11;"
 ```
 
 Checando:
-```
+```sh
+# 2.e.2
 psql -d ecommerce -c "SELECT * FROM cliente;"
 ```
 
@@ -404,7 +432,8 @@ Output:
 ```
 
 ##### `cat`
-```
+```sh
+# 2.e.3
 cat "$ARQUIVO"
 
 ```
@@ -416,7 +445,8 @@ Output:
 ```
 
 ##### `hexdump`
-```
+```sh
+# 2.e.4
 hd -C "$ARQUIVO"
 
 ```
@@ -470,7 +500,8 @@ Output:
 ```
 
 ##### `grep`
-```
+```sh
+# 2.e.5
 grep --text Juscelino "$ARQUIVO"
 
 ```
@@ -482,15 +513,17 @@ Output:
 
 > Perceba que, embora o registro tenha sido removido logicamente (não aparece mais no `SELECT`), os dados de `"Juscelino Kubitschek"` **ainda estão presentes no arquivo físico** (em `00001fa0`). Com o controle de concorrência multiversão (**MVCC**), o PostgreSQL apenas preenche o identificador da transação que excluiu a tupla (`xmax` no cabeçalho em `00001f8c`: `e1 02 00 00`), sem apagar os bytes do disco imediatamente.
 
-### 6. Update
-```
+### 2.f. Update
+```sh
+# 2.f.1
 psql -d ecommerce -c \
 "UPDATE cliente SET nome='MARI K.' WHERE id = 1001;"
 
 ```
 
 Checando:
-```
+```sh
+# 2.f.2
 psql -d ecommerce -c \
 "SELECT * FROM cliente WHERE id = 1001;"
 
@@ -506,7 +539,8 @@ Output:
 
 
 ##### `cat`
-```
+```sh
+# 2.f.3
 cat "$ARQUIVO"
 ```
 
@@ -519,7 +553,8 @@ Output:
 ```
 
 ##### `hexdump`
-```
+```sh
+# 2.f.4
 hd -C "$ARQUIVO"
 
 ```
@@ -538,7 +573,8 @@ Output:
 ```
 
 ##### `grep`
-```
+```sh
+# 2.f.5
 grep --text MARI "$ARQUIVO"
 ```
 
@@ -550,14 +586,16 @@ Output:
 
 > Perceba uma diferença fundamental do PostgreSQL (MVCC): mesmo reduzindo o tamanho do nome (`'MARIVALDA KANAMARY'` para `'MARI K.'`), o banco **não sobrescreve a tupla no lugar**. Um `UPDATE` no PostgreSQL equivale a marcar a versão antiga como obsoleta (em `00001f60` continua `98753936060'MARIVALDA KANAMARY`) e gravar uma **nova tupla** completa (em `00001d98` surge `98753936060.MARI K.`).
 
-### 7. 2o. Update
-```
+### 2.g. 2o. Update
+```sh
+# 2.g.1
 psql -d ecommerce -c \
 "UPDATE cliente SET nome='MARIVALDA DE ALCÂNTARA FRANCISCO ANTÔNIO JOÃO CARLOS XAVIER DE PAULA MIGUEL RAFAEL JOAQUIM JOSÉ GONZAGA PASCOAL CIPRIANO SERAFIM DE BRAGANÇA E BOURBON KANAMARY' WHERE id = 1001;"
 ```
 
 Checando:
-```
+```sh
+# 2.g.2
 psql -d ecommerce -c "SELECT * FROM cliente WHERE id = 1001;"
 
 ```
@@ -571,7 +609,8 @@ Output:
 ```
 
 ##### `cat`
-```
+```sh
+# 2.g.3
 cat "$ARQUIVO"
 ```
 
@@ -583,7 +622,8 @@ X D     ȟpzHv |Ȟ~~@`     )   98753936060 MARIVALDA DE ALCÂNTARA FRANCISCO ANT
 ```
 
 ##### `hexdump`
-```
+```sh
+# 2.g.4
 hd -C "$ARQUIVO"
 ```
 
@@ -653,7 +693,8 @@ Output:
 ```
 
 ##### `grep`
-```
+```sh
+# 2.g.5
 grep --text MARI "$ARQUIVO"
 ```
 
@@ -666,11 +707,11 @@ X D     ȟpzHv |Ȟ~~@`     )   98753936060 MARIVALDA DE ALCÂNTARA FRANCISCO ANT
 > Perceba agora que as **três versões** do registro `1001` coexistem fisicamente na página de 8 KB: a original (`MARIVALDA KANAMARY` em `00001f60`), a primeira atualização (`MARI K.` em `00001d98`) e a segunda atualização (`MARIVALDA DE ALCÂNTARA...` em `00001cc8`). As versões antigas (tuplas mortas) permanecem no arquivo até que uma rotina de limpeza (`VACUUM`) libere o espaço para reutilização.
 
 
-## Por dentro da página e do MVCC
+## 3. Por dentro da página e do MVCC
 
 Até aqui inspecionamos os bytes brutos do arquivo em disco. Agora vamos usar os recursos nativos do PostgreSQL para decodificar o cabeçalho de cada linha, os ponteiros da página de 8 KB, a reciclagem de espaço (`VACUUM`) e o armazenamento de atributos grandes (`TOAST`).
 
-### 8. Colunas ocultas de sistema (`ctid`, `xmin` e `xmax`)
+### 3.a. Colunas ocultas de sistema (`ctid`, `xmin` e `xmax`)
 
 Toda tabela no PostgreSQL possui colunas ocultas de sistema que revelam o endereçamento físico e o controle de concorrência multiversão (**MVCC**) de cada linha visível:
 - **`ctid`:** endereço físico da tupla no formato `(bloco, item)`. O bloco `0` é a primeira página de 8 KB do arquivo, e `item` é o índice do ponteiro de linha (*line pointer*) dentro dessa página.
@@ -678,7 +719,8 @@ Toda tabela no PostgreSQL possui colunas ocultas de sistema que revelam o endere
 - **`xmax`:** identificador da transação que apagou ou substituiu a tupla (`0` indica que a versão atual está ativa).
 
 Consultando as colunas de sistema da tabela `cliente`:
-```
+```sh
+# 3.a.1
 psql -d ecommerce -c \
 "SELECT ctid, xmin, xmax, id, cpf, left(nome, 25) AS nome FROM cliente;"
 ```
@@ -699,18 +741,20 @@ Output esperado:
 ```
 
 > Observe os saltos na coluna `ctid`:
-> - O item **`(0,2)`** sumiu do `SELECT` (era `id = 11`, Juscelino Kubitschek, excluído no passo 5).
+> - O item **`(0,2)`** sumiu do `SELECT` (era `id = 11`, Juscelino Kubitschek, excluído em `2.e`).
 > - Os itens **`(0,3)`** e **`(0,10)`** também não aparecem (eram a 1ª e a 2ª versão de `id = 1001`), enquanto a versão atual de `id = 1001` mora agora em **`(0,11)`** com `xmin = 739`.
 
-### 9. Anatomia da página de 8 KB com `pageinspect`
+### 3.b. Anatomia da página de 8 KB com `pageinspect`
 
 Um `SELECT` comum filtra apenas as tuplas visíveis. Para enxergar **todos os 11 itens** gravados na página `0` (incluindo as tuplas mortas) e conectar cada um ao endereço visto no `hexdump`, habilitamos a extensão oficial `pageinspect`:
-```
+```sh
+# 3.b.1
 psql -d ecommerce -c "CREATE EXTENSION pageinspect;"
 ```
 
 Primeiro, inspecionamos o cabeçalho da página `0` (`page_header`):
-```
+```sh
+# 3.b.2
 psql -d ecommerce -c \
 "SELECT lsn, lower, upper, special, pagesize
  FROM page_header(get_raw_page('cliente', 0));"
@@ -724,13 +768,14 @@ Output:
 (1 row)
 ```
 
-> Compare esses números com a primeira linha do `hd -C "$ARQUIVO"` no passo 7 (`00000000 ... 44 00 b0 1c`):
+> Compare esses números com a primeira linha do `hd -C "$ARQUIVO"` em `2.g.4` (`00000000 ... 44 00 b0 1c`):
 > - **`lower = 68`** (`0x0044` em hexadecimal): onde termina o vetor de ponteiros de linha no início da página (24 bytes de cabeçalho + 11 ponteiros de 4 bytes = 68 bytes).
 > - **`upper = 7344`** (`0x1cb0` em hexadecimal): onde começa a última tupla gravada no fundo da página (`00001cb0` no `hexdump`).
 > - O intervalo entre `68` e `7344` (`7276` bytes preenchidos com `00`) é o espaço livre da página.
 
 Agora listamos todos os 11 itens da página (`heap_page_items`), convertendo o deslocamento `lp_off` para hexadecimal (`hex_off`):
-```
+```sh
+# 3.b.3
 psql -d ecommerce -c \
 "SELECT lp, lp_off, to_hex(lp_off::int) AS hex_off, lp_flags, lp_len, t_xmin, t_xmax, t_ctid
  FROM heap_page_items(get_raw_page('cliente', 0));"
@@ -762,19 +807,17 @@ Output:
 >    - A 2ª versão (`MARI K.`) em **`(0,10)`** (`hex_off = 1d80`) recebeu `t_xmax = 739` e seu `t_ctid` passou a apontar para **`(0,11)`**.
 >    - A 3ª versão em **`(0,11)`** (`hex_off = 1cb0`) tem `t_xmax = 0` (ativa) e aponta para si mesma (`(0,11)`). Como a chave primária (`id = 1001`) não mudou e as novas versões couberam na mesma página, o PostgreSQL realizou atualizações **HOT (*Heap-Only Tuple*)**, encadeando as versões dentro da própria página sem precisar criar entradas extras no índice primário.
 
-### 10. Limpeza de tuplas mortas: `VACUUM` vs. `VACUUM FULL`
+### 3.c. Limpeza de tuplas mortas: `VACUUM` padrão
 
-Como o PostgreSQL recupera o espaço ocupado pelas tuplas mortas `(0,2)`, `(0,3)` e `(0,10)`? Existem duas formas com comportamentos físicos bem diferentes no disco.
-
-#### 10.a. `VACUUM` padrão (online, dentro da própria página)
-
-Executando o `VACUUM` padrão na tabela `cliente`:
-```
+Como o PostgreSQL recupera o espaço ocupado pelas tuplas mortas `(0,2)`, `(0,3)` e `(0,10)`? Existem duas formas com comportamentos físicos bem diferentes no disco. Vamos começar pelo `VACUUM` padrão (online, dentro da própria página):
+```sh
+# 3.c.1
 psql -d ecommerce -c "VACUUM cliente;"
 ```
 
 Verificando o cabeçalho e os itens da página `0` após o `VACUUM`:
-```
+```sh
+# 3.c.2
 psql -d ecommerce -c \
 "SELECT lsn, lower, upper, special, pagesize
  FROM page_header(get_raw_page('cliente', 0));"
@@ -812,7 +855,8 @@ Output:
 > - As tuplas vivas foram compactadas em direção ao fim da página: `upper` subiu de `7344` (`1cb0`) para `7520` (`1d60`), recuperando **176 bytes** de espaço livre dentro da página!
 
 Confirmando com `grep` que os bytes das tuplas mortas foram eliminados na desfragmentação da página:
-```
+```sh
+# 3.c.3
 grep --text Juscelino "$ARQUIVO" || echo "Juscelino removido da pagina"
 grep --text "MARI K." "$ARQUIVO" || echo "MARI K. removido da pagina"
 ```
@@ -823,15 +867,17 @@ Juscelino removido da pagina
 MARI K. removido da pagina
 ```
 
-#### 10.b. `VACUUM FULL` (reescrita física em um novo arquivo)
+### 3.d. Reescrita física: `VACUUM FULL`
 
 O `VACUUM` padrão organiza o espaço interno das páginas para reutilização pelo próprio banco, mas mantém os ponteiros redirecionados (`lp = 3`) e não devolve páginas vazias do meio da tabela ao sistema operacional. Já o **`VACUUM FULL`** reescreve a tabela inteira do zero em um **novo arquivo físico**:
-```
+```sh
+# 3.d.1
 psql -d ecommerce -c "VACUUM FULL cliente;"
 ```
 
 Veja o que acontece ao consultar o caminho antigo guardado em `$ARQUIVO`:
-```
+```sh
+# 3.d.2
 ls -la "$ARQUIVO" || true
 ```
 
@@ -841,7 +887,8 @@ ls: cannot access '/var/lib/postgresql/16/main/base/16386/16387': No such file o
 ```
 
 O arquivo antigo deixou de existir! Atualize a variável `ARQUIVO` com o novo caminho físico da tabela e inspecione os itens da nova página:
-```
+```sh
+# 3.d.3
 ARQUIVO="$PGDATA/$(psql -d ecommerce -tAc "SELECT pg_relation_filepath('cliente');")"
 echo "$ARQUIVO"
 psql -d ecommerce -c \
@@ -867,23 +914,21 @@ Output:
 
 > No novo arquivo (`16439`), restaram apenas os **8 registros ativos** renumerados sequencialmente de `(0,1)` a `(0,8)`, sem lacunas nem redirecionamentos.
 
-### 11. Atributos grandes: TOAST (*The Oversized-Attribute Storage Technique*)
+### 3.e. TOAST: compressão inline na própria página
 
-O PostgreSQL não permite que uma única tupla atravesse a fronteira de uma página de **8 KB**. Mas o que acontece quando inserimos um campo `text` com vários kilobytes ou megabytes? Entra em ação o mecanismo **TOAST**, que atua em duas etapas quando uma tupla ultrapassa cerca de **2 KB**:
-1. **Compressão inline:** tenta comprimir o atributo para que a tupla continue cabendo na página principal da tabela.
-2. **Armazenamento externo (*out-of-line*):** se mesmo após a tentativa de compressão a tupla continuar grande, o PostgreSQL move o conteúdo para uma tabela auxiliar (`pg_toast`) dividida em fatias (*chunks*) de ~2 KB, deixando apenas um ponteiro de **18 bytes** na linha original.
-
-#### 11.a. Compressão inline na própria página
+O PostgreSQL não permite que uma única tupla atravesse a fronteira de uma página de **8 KB**. Quando uma tupla ultrapassa cerca de **2 KB**, entra em ação o mecanismo **TOAST (*The Oversized-Attribute Storage Technique*)**, que primeiro tenta comprimir o atributo para mantê-lo na página principal.
 
 Vamos inserir o cliente `2001` cujo `nome` é a string `'POSTGRESQL_ROWSTORE_'` (20 bytes) repetida 150 vezes (**3.000 bytes** lógicos):
-```
+```sh
+# 3.e.1
 psql -d ecommerce -c \
 "INSERT INTO cliente (id, cpf, nome)
  VALUES (2001, '88888888888', repeat('POSTGRESQL_ROWSTORE_', 150));"
 ```
 
 Comparando o tamanho lógico da string (`length`) com os bytes efetivamente ocupados no disco (`pg_column_size`):
-```
+```sh
+# 3.e.2
 psql -d ecommerce -c \
 "SELECT id, cpf, length(nome) AS bytes_logicos, pg_column_size(nome) AS bytes_fisicos
  FROM cliente WHERE id = 2001;"
@@ -898,7 +943,8 @@ Output:
 ```
 
 Verificando no `hexdump` como os 3.000 bytes foram gravados em apenas **65 bytes** na página principal (`00001d10` a `00001d55`):
-```
+```sh
+# 3.e.3
 hd -C "$ARQUIVO" | head -n 20
 ```
 
@@ -928,10 +974,13 @@ Output:
 
 > Observe nas linhas `00001d20` a `00001d50`: o compressor `pglz` do PostgreSQL gravou o padrão `POSTGRESQL_ROWSTORE_` **apenas uma vez** seguido de referências curtas de repetição (`0f 14 ff ...`), mantendo a linha inteira dentro da página de 8 KB.
 
-#### 11.b. Armazenamento externo em `pg_toast` (dados incompressíveis > 2 KB)
+### 3.f. TOAST: armazenamento externo em `pg_toast`
 
-Agora vamos inserir o cliente `2002` com **10.263 bytes** de hashes MD5 concatenados (dados de alta entropia que não comprimem e são maiores que uma página inteira de 8 KB):
-```
+Se mesmo após a tentativa de compressão o atributo continuar grande, o PostgreSQL move o conteúdo para uma tabela auxiliar (`pg_toast`) dividida em fatias (*chunks*) de ~2 KB, deixando apenas um ponteiro de **18 bytes** na linha original.
+
+Vamos inserir o cliente `2002` com **10.263 bytes** de hashes MD5 concatenados (dados de alta entropia que não comprimem e são maiores que uma página inteira de 8 KB):
+```sh
+# 3.f.1
 psql -d ecommerce -c \
 "INSERT INTO cliente (id, cpf, nome)
  SELECT 2002, '99999999999',
@@ -940,7 +989,8 @@ psql -d ecommerce -c \
 ```
 
 Veja o tamanho da tupla `lp = 10` (`id = 2002`) na página principal da tabela `cliente`:
-```
+```sh
+# 3.f.2
 psql -d ecommerce -c \
 "SELECT lp, lp_off, to_hex(lp_off::int) AS hex_off, lp_len, t_xmin, t_ctid
  FROM heap_page_items(get_raw_page('cliente', 0))
@@ -959,7 +1009,8 @@ Output:
 A linha inteira do cliente `2002` ocupa apenas **58 bytes** (`lp_len = 58`) na página principal (24 bytes de cabeçalho + 4 bytes `id` + 12 bytes `cpf` + **18 bytes de ponteiro TOAST**)!
 
 Se procurarmos o texto `INICIO_TOAST` no arquivo principal da tabela `cliente`, ele **não está lá**:
-```
+```sh
+# 3.f.3
 grep --text "INICIO_TOAST" "$ARQUIVO" || echo "Nao encontrado no arquivo principal!"
 ```
 
@@ -969,7 +1020,8 @@ Nao encontrado no arquivo principal!
 ```
 
 Onde foram parar os 10.263 bytes do `nome`? Na tabela auxiliar **TOAST** associada à tabela `cliente` (`reltoastrelid`). Vamos consultar as fatias (*chunks*) na tabela TOAST e localizar seu arquivo físico em disco:
-```
+```sh
+# 3.f.4
 ARQUIVO_TOAST="$PGDATA/$(psql -d ecommerce -tAc "SELECT pg_relation_filepath(reltoastrelid) FROM pg_class WHERE relname = 'cliente';")"
 echo "$ARQUIVO_TOAST"
 psql -d ecommerce -c \
@@ -992,7 +1044,8 @@ Output:
 ```
 
 E buscando no arquivo físico da tabela TOAST (`$ARQUIVO_TOAST`), encontramos o início e o fim do nosso texto de 10 KB:
-```
+```sh
+# 3.f.5
 grep --text -o "INICIO_TOAST_[0-9a-f]\{32\}" "$ARQUIVO_TOAST"
 grep --text -o "[0-9a-f]\{32\}_FIM_TOAST" "$ARQUIVO_TOAST"
 ```
@@ -1013,7 +1066,7 @@ Espero que este exercício tenha proporcionado uma compreensão prática sobre o
 ## Checkpoint (Flush)
 
 Caso necessário, é possível forçar imediatamente a descarga das páginas sujas da memória (`shared_buffers`) para o arquivo de dados em disco executando um `CHECKPOINT`:
-```
+```sh
 psql -d ecommerce -c "CHECKPOINT;"
 ```
 
@@ -1047,7 +1100,7 @@ Para se aprofundar nos conceitos abordados neste laboratório:
 Fora do horário de aula, é possível executar o mesmo ambiente em qualquer máquina (ou provedor de nuvem) com Docker disponível. A imagem é publicada para `linux/amd64` e `linux/arm64` (inclusive Macs com Apple Silicon).
 
 Faça o clone deste repositório e inicialize o container com o `compose.yaml` disponível na raiz do projeto:
-```
+```sh
 git clone https://github.com/infobarbosa/postgres-rowstore-demo.git
 cd postgres-rowstore-demo
 docker compose up -d
@@ -1055,7 +1108,7 @@ docker compose up -d
 ```
 
 Ou, sem clonar o repositório:
-```
+```sh
 docker run -d --name postgres-lab -p 8080:8080 ghcr.io/infobarbosa/postgres-lab-docker-image:latest
 
 ```
@@ -1063,12 +1116,12 @@ docker run -d --name postgres-lab -p 8080:8080 ghcr.io/infobarbosa/postgres-lab-
 Acesse `http://localhost:8080` no navegador e siga o tutorial a partir do [Passo 3](#passo-3-acessar-a-ide).
 
 Para encerrar e remover o container (os dados do PostgreSQL serão descartados):
-```
+```sh
 docker compose down
 
 ```
 ou
-```
+```sh
 docker rm -f postgres-lab
 
 ```
