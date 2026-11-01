@@ -1,0 +1,6 @@
+services:
+  postgres-lab:
+    container_name: postgres-lab
+    image: ghcr.io/infobarbosa/postgres-lab-docker-image:latest
+    ports:
+      - "8080:8080"
